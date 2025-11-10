@@ -323,21 +323,40 @@ class DataAggregationService {
       limit = null
     } = options;
 
+    if (!Array.isArray(results)) {
+      return [];
+    }
+
     let aggregated = [];
 
     // Flatten results
     results.forEach((result, index) => {
+      if (!result || typeof result !== 'object') {
+        return;
+      }
+      
       const provider = result.provider || `provider_${index}`;
-      const comics = Array.isArray(result.data) ? result.data : (result.data?.data || []);
+      let comics = [];
+      
+      if (Array.isArray(result.data)) {
+        comics = result.data;
+      } else if (result.data && typeof result.data === 'object' && Array.isArray(result.data.data)) {
+        comics = result.data.data;
+      } else if (result.data && typeof result.data === 'object') {
+        // Single object, wrap in array
+        comics = [result.data];
+      }
 
       comics.forEach(comic => {
-        aggregated.push({
-          ...comic,
-          _source: provider,
-          _priority: priorityOrder.indexOf(provider) !== -1 
-            ? priorityOrder.indexOf(provider) 
-            : priorityOrder.length + index
-        });
+        if (comic && typeof comic === 'object') {
+          aggregated.push({
+            ...comic,
+            _source: provider,
+            _priority: priorityOrder.indexOf(provider) !== -1 
+              ? priorityOrder.indexOf(provider) 
+              : priorityOrder.length + index
+          });
+        }
       });
     });
 
@@ -396,9 +415,16 @@ class DataAggregationService {
    * @returns {string} Unique key
    */
   static getComicKey(comic) {
+    if (!comic || typeof comic !== 'object') {
+      return '';
+    }
+    
     // Try to create key from title (normalized)
     const title = (comic.title || '').toLowerCase().trim();
-    return title;
+    const href = (comic.href || '').toLowerCase().trim();
+    
+    // Use href if available, otherwise use title
+    return href || title || '';
   }
 
   /**
@@ -408,6 +434,9 @@ class DataAggregationService {
    * @returns {object} Merged comic
    */
   static mergeComics(comic1, comic2) {
+    if (!comic1 || typeof comic1 !== 'object') return comic2 || {};
+    if (!comic2 || typeof comic2 !== 'object') return comic1 || {};
+    
     return {
       ...comic1,
       ...comic2,
@@ -417,9 +446,9 @@ class DataAggregationService {
       // Keep better quality data
       thumbnail: comic2.thumbnail || comic1.thumbnail,
       description: comic2.description || comic1.description,
-      rating: Math.max(comic1.rating || 0, comic2.rating || 0),
+      rating: Math.max(parseFloat(comic1.rating) || 0, parseFloat(comic2.rating) || 0),
       // Track sources
-      _sources: [...(comic1._sources || [comic1._source]), comic2._source]
+      _sources: [...(Array.isArray(comic1._sources) ? comic1._sources : (comic1._source ? [comic1._source] : [])), comic2._source].filter(Boolean)
     };
   }
 
@@ -460,15 +489,31 @@ class DataAggregationService {
    * @returns {Array} Sorted comics
    */
   static sortComics(comics, sortBy) {
+    if (!Array.isArray(comics)) {
+      return [];
+    }
+    
     const sorted = [...comics];
 
     sorted.sort((a, b) => {
-      let aVal = a[sortBy] || a.metadata?.[sortBy] || 0;
-      let bVal = b[sortBy] || b.metadata?.[sortBy] || 0;
+      if (!a || typeof a !== 'object') return 1;
+      if (!b || typeof b !== 'object') return -1;
+      
+      let aVal = a[sortBy];
+      if (aVal === undefined && a.metadata) {
+        aVal = a.metadata[sortBy];
+      }
+      aVal = aVal !== undefined && aVal !== null ? aVal : 0;
+      
+      let bVal = b[sortBy];
+      if (bVal === undefined && b.metadata) {
+        bVal = b.metadata[sortBy];
+      }
+      bVal = bVal !== undefined && bVal !== null ? bVal : 0;
 
       if (typeof aVal === 'string') {
         aVal = aVal.toLowerCase();
-        bVal = bVal.toLowerCase();
+        bVal = (bVal || '').toString().toLowerCase();
       }
 
       if (aVal < bVal) return -1;

@@ -97,60 +97,98 @@ class ApiService {
 
     // Process providers
     let result;
-    if (providersList.length > 1) {
-      // Parallel processing
-      result = await ParallelProcessor.processProviders(
-        providersList,
-        'getLatestComics',
-        [page],
-        {
-          aggregate: true,
-          aggregateOptions: {
-            deduplicate: true,
-            sortBy: 'qualityScore',
-            limit: query.limit
+    try {
+      if (providersList.length > 1) {
+        // Parallel processing
+        result = await ParallelProcessor.processProviders(
+          providersList,
+          'getLatestComics',
+          [page],
+          {
+            aggregate: true,
+            aggregateOptions: {
+              deduplicate: true,
+              sortBy: 'qualityScore',
+              limit: query.limit
+            }
           }
-        }
-      );
-    } else {
-      // Single provider
-      const data = await executeScraper(providersList[0], 'getLatestComics', page);
+        );
+      } else {
+        // Single provider
+        const data = await executeScraper(providersList[0], 'getLatestComics', page);
+        result = {
+          success: true,
+          providers: providersList,
+          data: data.data || data,
+          metadata: {
+            current_page: data.current_page || page,
+            length_page: data.length_page || 1
+          }
+        };
+      }
+    } catch (error) {
+      // If all providers fail, return empty result
       result = {
-        success: true,
+        success: false,
         providers: providersList,
-        data: data.data || data,
+        data: [],
         metadata: {
-          current_page: data.current_page || page,
-          length_page: data.length_page || 1
+          current_page: page,
+          length_page: 1,
+          error: error.message
         }
       };
     }
 
-    let comics = Array.isArray(result.data) ? result.data : (result.data?.data || []);
+    let comics = [];
+    if (result && result.data) {
+      if (Array.isArray(result.data)) {
+        comics = result.data;
+      } else if (result.data.data && Array.isArray(result.data.data)) {
+        comics = result.data.data;
+      }
+    }
 
     // Apply query builder
-    if (Object.keys(query).length > 0) {
-      const queryBuilder = QueryBuilder.fromQuery(query);
-      const queryResult = queryBuilder.execute(comics);
-      comics = queryResult.data;
-      context.pagination = {
-        current_page: queryResult.page,
-        length_page: queryResult.totalPages,
-        total: queryResult.total
-      };
+    if (Object.keys(query).length > 0 && comics.length > 0) {
+      try {
+        const queryBuilder = QueryBuilder.fromQuery(query);
+        const queryResult = queryBuilder.execute(comics);
+        comics = Array.isArray(queryResult.data) ? queryResult.data : comics;
+        context.pagination = {
+          current_page: queryResult.page || page,
+          length_page: queryResult.totalPages || 1,
+          total: queryResult.total || comics.length
+        };
+      } catch (error) {
+        console.error('Query builder error:', error.message);
+        // Continue with original comics if query fails
+      }
     }
 
     // Process through pipeline
-    if (enrich) {
-      comics = await this.processor.process(comics, context);
+    if (enrich && comics.length > 0) {
+      try {
+        comics = await this.processor.process(comics, context);
+        comics = Array.isArray(comics) ? comics : [];
+      } catch (error) {
+        console.error('Pipeline processing error:', error.message);
+        // Continue with unprocessed comics if pipeline fails
+      }
     }
 
     // Optimize response
-    if (optimize) {
-      comics = ResponseOptimizer.optimize(comics, {
-        removeNulls: true,
-        removeEmpty: false
-      });
+    if (optimize && comics.length > 0) {
+      try {
+        comics = ResponseOptimizer.optimize(comics, {
+          removeNulls: true,
+          removeEmpty: false
+        });
+        comics = Array.isArray(comics) ? comics : [];
+      } catch (error) {
+        console.error('Response optimization error:', error.message);
+        // Continue with unoptimized comics if optimization fails
+      }
     }
 
     return {
@@ -163,7 +201,7 @@ class ApiService {
       metadata: {
         providers: providersList,
         processed: comics.length,
-        ...result.metadata
+        ...(result.metadata || {})
       }
     };
   }
@@ -202,40 +240,66 @@ class ApiService {
 
     // Process providers
     let result;
-    if (providersList.length > 1) {
-      result = await ParallelProcessor.processProviders(
-        providersList,
-        'searchComics',
-        [keyword],
-        {
-          aggregate: true,
-          aggregateOptions: {
-            deduplicate: true,
-            sortBy: 'qualityScore'
+    try {
+      if (providersList.length > 1) {
+        result = await ParallelProcessor.processProviders(
+          providersList,
+          'searchComics',
+          [keyword],
+          {
+            aggregate: true,
+            aggregateOptions: {
+              deduplicate: true,
+              sortBy: 'qualityScore'
+            }
           }
-        }
-      );
-    } else {
-      const data = await executeScraper(providersList[0], 'searchComics', keyword);
+        );
+      } else {
+        const data = await executeScraper(providersList[0], 'searchComics', keyword);
+        result = {
+          success: true,
+          providers: providersList,
+          data: Array.isArray(data) ? data : (data.data || [])
+        };
+      }
+    } catch (error) {
+      // If all providers fail, return empty result
       result = {
-        success: true,
+        success: false,
         providers: providersList,
-        data: Array.isArray(data) ? data : (data.data || [])
+        data: [],
+        metadata: {
+          error: error.message
+        }
       };
     }
 
-    let comics = Array.isArray(result.data) ? result.data : [];
+    let comics = [];
+    if (result && result.data) {
+      comics = Array.isArray(result.data) ? result.data : [];
+    }
 
     // Apply query builder
-    if (Object.keys(query).length > 0) {
-      const queryBuilder = QueryBuilder.fromQuery({ ...query, search: keyword });
-      const queryResult = queryBuilder.execute(comics);
-      comics = queryResult.data;
+    if (Object.keys(query).length > 0 && comics.length > 0) {
+      try {
+        const queryBuilder = QueryBuilder.fromQuery({ ...query, search: keyword });
+        const queryResult = queryBuilder.execute(comics);
+        comics = Array.isArray(queryResult.data) ? queryResult.data : comics;
+      } catch (error) {
+        console.error('Query builder error:', error.message);
+        // Continue with original comics if query fails
+      }
     }
 
     // Process through pipeline
-    if (enrich) {
-      comics = await this.processor.process(comics, context);
+    if (enrich && comics.length > 0) {
+      try {
+        comics = await this.processor.process(comics, context);
+        comics = Array.isArray(comics) ? comics : [];
+      } catch (error) {
+        console.error('Pipeline processing error:', error.message);
+        // Continue with unprocessed comics if pipeline fails
+      }
     }
 
     // Optimize response
@@ -286,47 +350,79 @@ class ApiService {
 
     // Process providers
     let result;
-    if (providersList.length > 1) {
-      result = await ParallelProcessor.processProviders(
-        providersList,
-        'getPopularComics',
-        [],
-        {
-          aggregate: true,
-          aggregateOptions: {
-            deduplicate: true,
-            sortBy: 'rating'
+    try {
+      if (providersList.length > 1) {
+        result = await ParallelProcessor.processProviders(
+          providersList,
+          'getPopularComics',
+          [],
+          {
+            aggregate: true,
+            aggregateOptions: {
+              deduplicate: true,
+              sortBy: 'rating'
+            }
           }
-        }
-      );
-    } else {
-      const data = await executeScraper(providersList[0], 'getPopularComics');
+        );
+      } else {
+        const data = await executeScraper(providersList[0], 'getPopularComics');
+        result = {
+          success: true,
+          providers: providersList,
+          data: Array.isArray(data) ? data : (data.data || [])
+        };
+      }
+    } catch (error) {
+      // If all providers fail, return empty result
       result = {
-        success: true,
+        success: false,
         providers: providersList,
-        data: Array.isArray(data) ? data : (data.data || [])
+        data: [],
+        metadata: {
+          error: error.message
+        }
       };
     }
 
-    let comics = Array.isArray(result.data) ? result.data : [];
+    let comics = [];
+    if (result && result.data) {
+      comics = Array.isArray(result.data) ? result.data : [];
+    }
 
     // Apply query builder
-    if (Object.keys(query).length > 0) {
-      const queryBuilder = QueryBuilder.fromQuery(query);
-      const queryResult = queryBuilder.execute(comics);
-      comics = queryResult.data;
+    if (Object.keys(query).length > 0 && comics.length > 0) {
+      try {
+        const queryBuilder = QueryBuilder.fromQuery(query);
+        const queryResult = queryBuilder.execute(comics);
+        comics = Array.isArray(queryResult.data) ? queryResult.data : comics;
+      } catch (error) {
+        console.error('Query builder error:', error.message);
+        // Continue with original comics if query fails
+      }
     }
 
     // Process through pipeline
-    if (enrich) {
-      comics = await this.processor.process(comics, context);
+    if (enrich && comics.length > 0) {
+      try {
+        comics = await this.processor.process(comics, context);
+        comics = Array.isArray(comics) ? comics : [];
+      } catch (error) {
+        console.error('Pipeline processing error:', error.message);
+        // Continue with unprocessed comics if pipeline fails
+      }
     }
 
     // Optimize response
-    if (optimize) {
-      comics = ResponseOptimizer.optimize(comics, {
-        removeNulls: true
-      });
+    if (optimize && comics.length > 0) {
+      try {
+        comics = ResponseOptimizer.optimize(comics, {
+          removeNulls: true
+        });
+        comics = Array.isArray(comics) ? comics : [];
+      } catch (error) {
+        console.error('Response optimization error:', error.message);
+        // Continue with unoptimized comics if optimization fails
+      }
     }
 
     return {
@@ -335,7 +431,7 @@ class ApiService {
       metadata: {
         providers: providersList,
         total: comics.length,
-        ...result.metadata
+        ...(result.metadata || {})
       }
     };
   }
@@ -377,29 +473,52 @@ class ApiService {
       detail = await ParallelProcessor.processWithFallback(
         providersList,
         'getComicDetail',
-        [url]
+        [url],
+        { timeout: 30000 }
       );
     } catch (error) {
-      throw error;
+      // If all providers fail, throw error
+      throw new Error(`Failed to get comic detail: ${error.message}`);
     }
 
-    let comic = detail.data;
+    let comic = detail.data || {};
 
     // Process through pipeline
-    if (enrich) {
-      comic = await this.processor.process(comic, context);
+    if (enrich && comic && typeof comic === 'object') {
+      try {
+        comic = await this.processor.process(comic, context);
+        comic = comic && typeof comic === 'object' ? comic : {};
+      } catch (error) {
+        console.error('Pipeline processing error:', error.message);
+        // Continue with unprocessed comic if pipeline fails
+      }
     }
 
     // Enrich chapters
-    if (comic.chapter && Array.isArray(comic.chapter)) {
-      comic.chapter = comic.chapter.map(ch => DataEnrichmentService.enrichChapter(ch));
+    if (comic && comic.chapter && Array.isArray(comic.chapter)) {
+      try {
+        comic.chapter = comic.chapter.map(ch => {
+          if (ch && typeof ch === 'object') {
+            return DataEnrichmentService.enrichChapter(ch);
+          }
+          return ch;
+        }).filter(Boolean);
+      } catch (error) {
+        console.error('Chapter enrichment error:', error.message);
+      }
     }
 
     // Optimize response
-    if (optimize) {
-      comic = ResponseOptimizer.optimize(comic, {
-        removeNulls: true
-      });
+    if (optimize && comic && typeof comic === 'object') {
+      try {
+        comic = ResponseOptimizer.optimize(comic, {
+          removeNulls: true
+        });
+        comic = comic && typeof comic === 'object' ? comic : {};
+      } catch (error) {
+        console.error('Response optimization error:', error.message);
+        // Continue with unoptimized comic if optimization fails
+      }
     }
 
     return {
@@ -407,7 +526,7 @@ class ApiService {
       data: comic,
       metadata: {
         provider: detail.provider,
-        fallback: detail.fallback
+        fallback: detail.fallback || false
       }
     };
   }

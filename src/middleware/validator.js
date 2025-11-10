@@ -5,7 +5,7 @@
 const { ValidationError } = require('../helper/error_handler');
 
 /**
- * Validate page parameter
+ * Validate page parameter (optional, defaults to 1)
  * @param {object} req - Express request
  * @param {object} res - Express response
  * @param {function} next - Express next function
@@ -13,13 +13,10 @@ const { ValidationError } = require('../helper/error_handler');
 const validatePage = (req, res, next) => {
   const page = req.query.page;
   
+  // Page is optional, default to 1
   if (page === undefined || page === null || page === '') {
-    return res.status(400).json({
-      status: 'error',
-      code: 'VALIDATION_ERROR',
-      message: 'page parameter is required',
-      data: []
-    });
+    req.query.page = 1;
+    return next();
   }
   
   const pageNum = parseInt(page);

@@ -16,10 +16,13 @@ app.use(express.json());
 // Routes
 app.use(router);
 
-// Start server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
+// Vercel serverless function handler
 module.exports = app;
+
+// Start server only if not in Vercel environment
+if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
