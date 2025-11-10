@@ -190,6 +190,113 @@ const providers = {
         panels: 'img[src*="chapter"], img[src*="image"]'
       }
     }
+  },
+  aquareader: {
+    name: 'Aqua Reader',
+    baseUrl: 'https://aquareader.net',
+    enabled: true,
+    default: false,
+    features: {
+      latest: true,
+      popular: true,
+      recommended: true,
+      search: true,
+      detail: true,
+      read: true,
+      genre: true,
+      genreList: true
+    },
+    urlPatterns: {
+      latest: '/page/{page}',
+      popular: '/',
+      recommended: '/',
+      search: '/?s={keyword}',
+      detail: '/{slug}',
+      read: '/{slug}',
+      genre: '/genre/{genre}/page/{page}',
+      genreList: '/'
+    },
+    selectors: {
+      latest: {
+        container: 'main, #main, .main-content, .content, body',
+        items: '.comic-item, .manga-item, article, .post, .item',
+        title: 'h3, h2, .title, a',
+        href: 'a',
+        thumbnail: 'img',
+        type: '.type, [class*="type"]',
+        chapter: '.chapter, .ch, .chapter-number',
+        rating: '.rating, .score, .rate',
+        pagination: '.pagination, .page-numbers'
+      },
+      popular: {
+        container: '.popular, .popular-series, .hot, main, body',
+        items: '.comic-item, .manga-item, article, .post, .item',
+        title: 'h3, h2, .title, a',
+        href: 'a',
+        thumbnail: 'img',
+        type: '.type, [class*="type"]',
+        chapter: '.chapter, .ch',
+        rating: '.rating, .score'
+      },
+      recommended: {
+        container: '.recommended, .featured, main, body',
+        items: '.comic-item, .manga-item, article, .post, .item',
+        title: 'h3, h2, .title, a',
+        href: 'a',
+        thumbnail: 'img',
+        type: '.type, [class*="type"]',
+        chapter: '.chapter, .ch',
+        rating: '.rating, .score'
+      },
+      search: {
+        container: 'main, #main, .search-results, .results, body',
+        items: '.comic-item, .manga-item, article, .post, .item, .search-item',
+        title: 'h3, h2, .title, a',
+        href: 'a',
+        thumbnail: 'img',
+        type: '.type, [class*="type"]',
+        chapter: '.chapter, .ch',
+        rating: '.rating, .score'
+      },
+      detail: {
+        container: 'main, #main, .comic-detail, body',
+        title: 'h1, .title, .comic-title',
+        thumbnail: '.cover img, .thumbnail img, .poster img',
+        description: '.description, .synopsis, .summary, .content p',
+        rating: '.rating, .score, .rate',
+        released: '.released, .year, [class*="released"]',
+        author: '.author, [class*="author"]',
+        status: '.status, [class*="status"]',
+        type: '.type, [class*="type"]',
+        chapters: '.chapters a, .chapter-list a, .chapter-item a',
+        chapterTitle: 'a',
+        chapterHref: 'a',
+        chapterDate: '.date, .time',
+        genres: '.genres a, .genre a, .tags a'
+      },
+      read: {
+        container: 'main, #main, .reader, .viewer, body',
+        title: 'h1, .title, .chapter-title',
+        panels: '.reading-content img, .chapter-content img, .comic-images img, img[src*="chapter"]'
+      },
+      genre: {
+        container: 'main, #main, .genre-page, body',
+        items: '.comic-item, .manga-item, article, .post, .item',
+        title: 'h3, h2, .title, a',
+        href: 'a',
+        thumbnail: 'img',
+        type: '.type, [class*="type"]',
+        chapter: '.chapter, .ch',
+        rating: '.rating, .score',
+        pagination: '.pagination, .page-numbers'
+      },
+      genreList: {
+        container: 'nav, .sidebar, .genre-list, body',
+        items: '.genre-list a, .genres a, nav a[href*="/genre/"]',
+        title: 'a',
+        href: 'a'
+      }
+    }
   }
 };
 

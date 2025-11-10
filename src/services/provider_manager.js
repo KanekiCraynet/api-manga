@@ -6,16 +6,13 @@
 const { getProvider, getDefaultProvider, supportsFeature } = require('../config/providers');
 const { ValidationError } = require('../helper/error_handler');
 
-// Import scraper services
-const komikcastScraper = require('./scraper_service');
-const shinigamiScraper = require('./shinigami_scraper');
-
 /**
- * Provider registry mapping
+ * Provider registry mapping with lazy loading to avoid circular dependencies
  */
 const providerRegistry = {
-  komikcast: komikcastScraper,
-  shinigami: shinigamiScraper
+  komikcast: () => require('./scraper_service'),
+  shinigami: () => require('./shinigami_scraper'),
+  aquareader: () => require('./aquareader_scraper')
 };
 
 /**
@@ -34,13 +31,14 @@ const getScraperService = (providerId) => {
     throw new ValidationError(`Provider '${providerId}' is not enabled`);
   }
   
-  const scraper = providerRegistry[providerId];
+  const scraperLoader = providerRegistry[providerId];
   
-  if (!scraper) {
+  if (!scraperLoader) {
     throw new ValidationError(`Scraper service for provider '${providerId}' not found`);
   }
   
-  return scraper;
+  // Lazy load the scraper to avoid circular dependencies
+  return typeof scraperLoader === 'function' ? scraperLoader() : scraperLoader;
 };
 
 /**
