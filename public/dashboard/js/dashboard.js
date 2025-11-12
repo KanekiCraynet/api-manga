@@ -13,8 +13,9 @@ const Dashboard = {
     column: null,
     direction: 'asc'
   },
-  chartUpdateThrottle: null,
+  chartUpdatePending: false,
   lastChartUpdate: 0,
+  chartUpdateThrottle: 1000, // Update charts max once per second
 
   /**
    * Initialize dashboard
@@ -103,6 +104,9 @@ const Dashboard = {
     const chartOptions = {
       responsive: true,
       maintainAspectRatio: false,
+      animation: {
+        duration: 0 // Disable animations for better performance
+      },
       plugins: {
         legend: {
           display: false
@@ -367,20 +371,14 @@ const Dashboard = {
   },
 
   /**
-   * Update charts with time-series data (throttled for performance)
+   * Update charts with time-series data
    */
   updateCharts(timeSeriesData) {
     if (!timeSeriesData || timeSeriesData.length === 0) return;
 
-    // Throttle chart updates to max once per 500ms
+    // Throttle chart updates to avoid performance issues
     const now = Date.now();
-    if (now - this.lastChartUpdate < 500) {
-      if (this.chartUpdateThrottle) {
-        clearTimeout(this.chartUpdateThrottle);
-      }
-      this.chartUpdateThrottle = setTimeout(() => {
-        this.updateCharts(timeSeriesData);
-      }, 500 - (now - this.lastChartUpdate));
+    if (now - this.lastChartUpdate < this.chartUpdateThrottle) {
       return;
     }
     this.lastChartUpdate = now;
@@ -452,23 +450,28 @@ const Dashboard = {
       };
 
       this.eventSource.onmessage = (event) => {
-        // Use requestAnimationFrame to prevent blocking
-        requestAnimationFrame(() => {
-          try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'connected') {
-              this.updateConnectionStatus('connected');
-            } else if (data.type === 'metrics') {
-              this.handleRealtimeMetrics(data);
-            } else if (data.type === 'error') {
-              console.error('SSE error:', data.message);
-              this.updateConnectionStatus('error');
+        // Use requestAnimationFrame to batch updates and avoid blocking
+        if (!this.chartUpdatePending) {
+          this.chartUpdatePending = true;
+          requestAnimationFrame(() => {
+            try {
+              const data = JSON.parse(event.data);
+              
+              if (data.type === 'connected') {
+                this.updateConnectionStatus('connected');
+              } else if (data.type === 'metrics') {
+                this.handleRealtimeMetrics(data);
+              } else if (data.type === 'error') {
+                console.error('SSE error:', data.message);
+                this.updateConnectionStatus('error');
+              }
+            } catch (error) {
+              console.error('Error parsing SSE data:', error);
+            } finally {
+              this.chartUpdatePending = false;
             }
-          } catch (error) {
-            console.error('Error parsing SSE data:', error);
-          }
-        });
+          });
+        }
       };
 
       this.eventSource.onerror = () => {
@@ -503,29 +506,28 @@ const Dashboard = {
       this.realtimeData.shift();
     }
 
-    // Update charts with real-time data (throttled)
-    if (this.realtimeData.length > 1) {
-      const now = Date.now();
-      if (now - this.lastChartUpdate < 500) {
-        return; // Skip update if too soon
+    // Throttle chart updates - only update every second
+    const now = Date.now();
+    if (now - this.lastChartUpdate >= this.chartUpdateThrottle) {
+      // Update charts with real-time data (throttled)
+      if (this.realtimeData.length > 1) {
+        const labels = this.realtimeData.map(d => {
+          const date = new Date(d.timestamp);
+          return date.toLocaleTimeString();
+        });
+
+        requestAnimationFrame(() => {
+          if (this.charts.responseTime) {
+            this.charts.responseTime.data.labels = labels;
+            this.charts.responseTime.data.datasets[0].data = this.realtimeData.map(d => d.responseTime);
+            this.charts.responseTime.update('none');
+          }
+        });
       }
       this.lastChartUpdate = now;
-
-      const labels = this.realtimeData.map(d => {
-        const date = new Date(d.timestamp);
-        return date.toLocaleTimeString();
-      });
-
-      requestAnimationFrame(() => {
-        if (this.charts.responseTime) {
-          this.charts.responseTime.data.labels = labels;
-          this.charts.responseTime.data.datasets[0].data = this.realtimeData.map(d => d.responseTime);
-          this.charts.responseTime.update('none');
-        }
-      });
     }
 
-    // Update overview cards with latest data
+    // Update overview cards with latest data (always update, lightweight)
     if (data.performance) {
       const responseTimeEl = document.getElementById('response-time-value');
       if (responseTimeEl && data.performance.recentResponseTime) {
