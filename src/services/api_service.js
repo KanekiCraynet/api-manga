@@ -1,6 +1,7 @@
 /**
  * Advanced API Service
  * Integrates all processing components untuk efficient data handling
+ * Enhanced with request queue, data integrity, and scrape orchestration
  */
 
 const { DataProcessor, DataEnrichmentService, BatchProcessor, DataAggregationService } = require('./data_processor');
@@ -8,6 +9,9 @@ const QueryBuilder = require('./query_builder');
 const ParallelProcessor = require('./parallel_processor');
 const ResponseOptimizer = require('./response_optimizer');
 const { executeScraper, listProviders } = require('./provider_manager');
+const { scrapeOrchestrator } = require('./scrape_orchestrator');
+const { dataIntegrityService } = require('./data_integrity');
+const { requestQueue } = require('./request_queue');
 
 /**
  * Advanced API Service
@@ -68,6 +72,7 @@ class ApiService {
 
   /**
    * Get latest comics with advanced processing
+   * Enhanced with orchestration, data integrity, and smart caching
    * @param {object} options - Query options
    * @returns {Promise<object>} Processed comics
    */
@@ -75,10 +80,13 @@ class ApiService {
     const {
       page = 1,
       provider = null,
-      providers = null, // Multiple providers
+      providers = null,
       query = {},
       enrich = true,
-      optimize = true
+      optimize = true,
+      forceRefresh = false,
+      getAllPages = false,
+      maxPages = 5
     } = options;
 
     const context = { page, provider, query };
@@ -90,66 +98,81 @@ class ApiService {
     } else if (provider) {
       providersList = [provider];
     } else {
-      // Use all enabled providers
       const allProviders = listProviders();
       providersList = allProviders.map(p => p.id);
     }
 
-    // Process providers
     let result;
+    let comics = [];
+    let pagination = { current_page: page, length_page: 1 };
+
     try {
       if (providersList.length > 1) {
-        // Parallel processing
-        result = await ParallelProcessor.processProviders(
-          providersList,
-          'getLatestComics',
-          [page],
-          {
-            aggregate: true,
-            aggregateOptions: {
-              deduplicate: true,
-              sortBy: 'qualityScore',
-              limit: query.limit
-            }
-          }
-        );
-      } else {
-        // Single provider
-        const data = await executeScraper(providersList[0], 'getLatestComics', page);
-        result = {
-          success: true,
+        // Multi-provider scraping with orchestration
+        result = await scrapeOrchestrator.scrapeMultiProvider({
+          operation: 'getLatestComics',
           providers: providersList,
-          data: data.data || data,
-          metadata: {
-            current_page: data.current_page || page,
-            length_page: data.length_page || 1
+          args: [page],
+          aggregateStrategy: 'merge',
+          failureThreshold: 0.7
+        });
+
+        if (result.success && result.data) {
+          comics = Array.isArray(result.data) ? result.data : [];
+        }
+      } else if (getAllPages) {
+        // Paginated scraping for single provider
+        result = await scrapeOrchestrator.scrapePaginated({
+          operation: 'getLatestComics',
+          providerId: providersList[0],
+          maxPages,
+          startPage: page,
+          stopOnEmpty: true,
+          stopOnDuplicate: true,
+          duplicateThreshold: 0.7
+        });
+
+        if (result.success && result.data) {
+          comics = result.data;
+          pagination = result.pagination || pagination;
+        }
+      } else {
+        // Single provider, single page
+        result = await scrapeOrchestrator.scrape({
+          operation: 'getLatestComics',
+          providerId: providersList[0],
+          args: [page],
+          forceRefresh,
+          deduplication: true
+        });
+
+        if (result.success && result.data) {
+          if (Array.isArray(result.data)) {
+            comics = result.data;
+          } else if (result.data.data && Array.isArray(result.data.data)) {
+            comics = result.data.data;
+            pagination = {
+              current_page: result.data.current_page || page,
+              length_page: result.data.length_page || 1
+            };
           }
-        };
+        }
       }
+
+      // Detect new items for tracking
+      const newItemsDetection = dataIntegrityService.detectNewItems(comics, 'latest_comics');
+      context.newItems = newItemsDetection.stats;
+
     } catch (error) {
-      // If all providers fail, return empty result
+      console.error('Scraping error:', error.message);
       result = {
         success: false,
-        providers: providersList,
         data: [],
-        metadata: {
-          current_page: page,
-          length_page: 1,
-          error: error.message
-        }
+        error: error.message
       };
     }
 
-    let comics = [];
-    if (result && result.data) {
-      if (Array.isArray(result.data)) {
-        comics = result.data;
-      } else if (result.data.data && Array.isArray(result.data.data)) {
-        comics = result.data.data;
-      }
-    }
-
-    // Apply query builder
+    // Apply query builder for filtering/sorting
     if (Object.keys(query).length > 0 && comics.length > 0) {
       try {
         const queryBuilder = QueryBuilder.fromQuery(query);
@@ -162,18 +185,16 @@ class ApiService {
         };
       } catch (error) {
         console.error('Query builder error:', error.message);
-        // Continue with original comics if query fails
       }
     }
 
-    // Process through pipeline
+    // Process through enrichment pipeline
     if (enrich && comics.length > 0) {
       try {
         comics = await this.processor.process(comics, context);
         comics = Array.isArray(comics) ? comics : [];
       } catch (error) {
         console.error('Pipeline processing error:', error.message);
-        // Continue with unprocessed comics if pipeline fails
       }
     }
 
@@ -187,27 +208,27 @@ class ApiService {
         comics = Array.isArray(comics) ? comics : [];
       } catch (error) {
         console.error('Response optimization error:', error.message);
-        // Continue with unoptimized comics if optimization fails
       }
     }
 
     return {
       status: 'success',
       data: comics,
-      pagination: context.pagination || result.metadata || {
-        current_page: page,
-        length_page: 1
-      },
+      pagination: context.pagination || pagination,
       metadata: {
-        providers: providersList,
+        providers: result?.providers?.successful || providersList,
         processed: comics.length,
-        ...(result.metadata || {})
+        fromCache: result?.fromCache || false,
+        newItems: context.newItems?.new || 0,
+        source: result?.source || 'unknown',
+        ...(result?.errors?.length > 0 ? { providerErrors: result.errors } : {})
       }
     };
   }
 
   /**
    * Search comics with advanced processing
+   * Enhanced with orchestration and data integrity
    * @param {object} options - Search options
    * @returns {Promise<object>} Search results
    */
@@ -218,7 +239,8 @@ class ApiService {
       providers = null,
       query = {},
       enrich = true,
-      optimize = true
+      optimize = true,
+      forceRefresh = false
     } = options;
 
     if (!keyword) {
@@ -238,48 +260,55 @@ class ApiService {
       providersList = allProviders.map(p => p.id);
     }
 
-    // Process providers
     let result;
+    let comics = [];
+
     try {
       if (providersList.length > 1) {
-        result = await ParallelProcessor.processProviders(
-          providersList,
-          'searchComics',
-          [keyword],
-          {
-            aggregate: true,
-            aggregateOptions: {
-              deduplicate: true,
-              sortBy: 'qualityScore'
-            }
-          }
-        );
-      } else {
-        const data = await executeScraper(providersList[0], 'searchComics', keyword);
-        result = {
-          success: true,
+        // Multi-provider search
+        result = await scrapeOrchestrator.scrapeMultiProvider({
+          operation: 'searchComics',
           providers: providersList,
-          data: Array.isArray(data) ? data : (data.data || [])
-        };
+          args: [keyword],
+          aggregateStrategy: 'merge',
+          failureThreshold: 0.7
+        });
+
+        if (result.success && result.data) {
+          comics = Array.isArray(result.data) ? result.data : [];
+        }
+      } else {
+        // Single provider search
+        result = await scrapeOrchestrator.scrape({
+          operation: 'searchComics',
+          providerId: providersList[0],
+          args: [keyword],
+          forceRefresh,
+          deduplication: true
+        });
+
+        if (result.success && result.data) {
+          comics = Array.isArray(result.data) ? result.data : 
+            (result.data.data || []);
+        }
       }
+
+      // Track search results
+      dataIntegrityService.updateFreshness(`search_${keyword}`, {
+        keyword,
+        resultCount: comics.length
+      });
+
     } catch (error) {
-      // If all providers fail, return empty result
+      console.error('Search error:', error.message);
       result = {
         success: false,
-        providers: providersList,
         data: [],
-        metadata: {
-          error: error.message
-        }
+        error: error.message
       };
     }
 
-    let comics = [];
-    if (result && result.data) {
-      comics = Array.isArray(result.data) ? result.data : [];
-    }
-
-    // Apply query builder
+    // Apply query builder for additional filtering
     if (Object.keys(query).length > 0 && comics.length > 0) {
       try {
         const queryBuilder = QueryBuilder.fromQuery({ ...query, search: keyword });
@@ -287,23 +316,21 @@ class ApiService {
         comics = Array.isArray(queryResult.data) ? queryResult.data : comics;
       } catch (error) {
         console.error('Query builder error:', error.message);
-        // Continue with original comics if query fails
       }
     }
 
-    // Process through pipeline
+    // Process through enrichment pipeline
     if (enrich && comics.length > 0) {
       try {
         comics = await this.processor.process(comics, context);
         comics = Array.isArray(comics) ? comics : [];
       } catch (error) {
         console.error('Pipeline processing error:', error.message);
-        // Continue with unprocessed comics if pipeline fails
       }
     }
 
     // Optimize response
-    if (optimize) {
+    if (optimize && comics.length > 0) {
       comics = ResponseOptimizer.optimize(comics, {
         removeNulls: true
       });
@@ -314,15 +341,18 @@ class ApiService {
       data: comics,
       metadata: {
         keyword,
-        providers: providersList,
+        providers: result?.providers?.successful || providersList,
         total: comics.length,
-        ...result.metadata
+        fromCache: result?.fromCache || false,
+        source: result?.source || 'unknown',
+        ...(result?.errors?.length > 0 ? { providerErrors: result.errors } : {})
       }
     };
   }
 
   /**
    * Get popular comics with advanced processing
+   * Enhanced with orchestration and data integrity
    * @param {object} options - Query options
    * @returns {Promise<object>} Popular comics
    */
@@ -332,7 +362,8 @@ class ApiService {
       providers = null,
       query = {},
       enrich = true,
-      optimize = true
+      optimize = true,
+      forceRefresh = false
     } = options;
 
     const context = { provider, query };
@@ -348,45 +379,46 @@ class ApiService {
       providersList = allProviders.map(p => p.id);
     }
 
-    // Process providers
     let result;
+    let comics = [];
+
     try {
       if (providersList.length > 1) {
-        result = await ParallelProcessor.processProviders(
-          providersList,
-          'getPopularComics',
-          [],
-          {
-            aggregate: true,
-            aggregateOptions: {
-              deduplicate: true,
-              sortBy: 'rating'
-            }
-          }
-        );
-      } else {
-        const data = await executeScraper(providersList[0], 'getPopularComics');
-        result = {
-          success: true,
+        // Multi-provider popular comics
+        result = await scrapeOrchestrator.scrapeMultiProvider({
+          operation: 'getPopularComics',
           providers: providersList,
-          data: Array.isArray(data) ? data : (data.data || [])
-        };
+          args: [],
+          aggregateStrategy: 'merge',
+          failureThreshold: 0.7
+        });
+
+        if (result.success && result.data) {
+          comics = Array.isArray(result.data) ? result.data : [];
+        }
+      } else {
+        // Single provider
+        result = await scrapeOrchestrator.scrape({
+          operation: 'getPopularComics',
+          providerId: providersList[0],
+          args: [],
+          forceRefresh,
+          deduplication: true
+        });
+
+        if (result.success && result.data) {
+          comics = Array.isArray(result.data) ? result.data : 
+            (result.data.data || []);
+        }
       }
+
     } catch (error) {
-      // If all providers fail, return empty result
+      console.error('Popular comics error:', error.message);
       result = {
         success: false,
-        providers: providersList,
         data: [],
-        metadata: {
-          error: error.message
-        }
+        error: error.message
       };
-    }
-
-    let comics = [];
-    if (result && result.data) {
-      comics = Array.isArray(result.data) ? result.data : [];
     }
 
     // Apply query builder
@@ -397,18 +429,16 @@ class ApiService {
         comics = Array.isArray(queryResult.data) ? queryResult.data : comics;
       } catch (error) {
         console.error('Query builder error:', error.message);
-        // Continue with original comics if query fails
       }
     }
 
-    // Process through pipeline
+    // Process through enrichment pipeline
     if (enrich && comics.length > 0) {
       try {
         comics = await this.processor.process(comics, context);
         comics = Array.isArray(comics) ? comics : [];
       } catch (error) {
         console.error('Pipeline processing error:', error.message);
-        // Continue with unprocessed comics if pipeline fails
       }
     }
 
@@ -421,7 +451,6 @@ class ApiService {
         comics = Array.isArray(comics) ? comics : [];
       } catch (error) {
         console.error('Response optimization error:', error.message);
-        // Continue with unoptimized comics if optimization fails
       }
     }
 
@@ -429,9 +458,11 @@ class ApiService {
       status: 'success',
       data: comics,
       metadata: {
-        providers: providersList,
+        providers: result?.providers?.successful || providersList,
         total: comics.length,
-        ...(result.metadata || {})
+        fromCache: result?.fromCache || false,
+        source: result?.source || 'unknown',
+        ...(result?.errors?.length > 0 ? { providerErrors: result.errors } : {})
       }
     };
   }
@@ -447,6 +478,7 @@ class ApiService {
 
   /**
    * Get comic detail with advanced processing
+   * Enhanced with orchestration and data integrity
    * @param {object} options - Detail options
    * @returns {Promise<object>} Comic detail
    */
@@ -455,7 +487,8 @@ class ApiService {
       url,
       provider = null,
       enrich = true,
-      optimize = true
+      optimize = true,
+      forceRefresh = false
     } = options;
 
     if (!url) {
@@ -463,46 +496,81 @@ class ApiService {
     }
 
     const context = { url, provider };
-
-    // Get detail
     const providersList = provider ? [provider] : listProviders().map(p => p.id);
-    let detail;
+    
+    let result;
+    let comic = {};
 
-    // Try providers with fallback
     try {
-      detail = await ParallelProcessor.processWithFallback(
-        providersList,
-        'getComicDetail',
-        [url],
-        { timeout: 30000 }
-      );
+      // Try single provider or fallback
+      for (const providerId of providersList) {
+        try {
+          result = await scrapeOrchestrator.scrape({
+            operation: 'getComicDetail',
+            providerId,
+            args: [url],
+            forceRefresh,
+            deduplication: false
+          });
+
+          if (result.success && result.data) {
+            comic = result.data;
+            break;
+          }
+        } catch (error) {
+          console.warn(`Provider ${providerId} failed for detail: ${error.message}`);
+          continue;
+        }
+      }
+
+      if (!comic || Object.keys(comic).length === 0) {
+        throw new Error('Failed to get comic detail from any provider');
+      }
+
+      // Mark comic as processed with hash
+      const comicHash = dataIntegrityService.generateHash(comic, ['title', 'href']);
+      dataIntegrityService.markProcessed(comicHash, 'comic_detail', {
+        url,
+        provider: result?.provider
+      });
+
     } catch (error) {
-      // If all providers fail, throw error
+      console.error('Comic detail error:', error.message);
       throw new Error(`Failed to get comic detail: ${error.message}`);
     }
 
-    let comic = detail.data || {};
-
-    // Process through pipeline
+    // Process through enrichment pipeline
     if (enrich && comic && typeof comic === 'object') {
       try {
         comic = await this.processor.process(comic, context);
         comic = comic && typeof comic === 'object' ? comic : {};
       } catch (error) {
         console.error('Pipeline processing error:', error.message);
-        // Continue with unprocessed comic if pipeline fails
       }
     }
 
-    // Enrich chapters
+    // Enrich and deduplicate chapters
     if (comic && comic.chapter && Array.isArray(comic.chapter)) {
       try {
-        comic.chapter = comic.chapter.map(ch => {
+        // Deduplicate chapters
+        const chapterDedupe = dataIntegrityService.deduplicate(comic.chapter, {
+          fields: ['title', 'href'],
+          strategy: 'first',
+          context: `chapters_${url}`
+        });
+
+        comic.chapter = chapterDedupe.items.map(ch => {
           if (ch && typeof ch === 'object') {
             return DataEnrichmentService.enrichChapter(ch);
           }
           return ch;
         }).filter(Boolean);
+
+        // Add chapter stats
+        comic.chapterStats = {
+          total: comic.chapter.length,
+          duplicatesRemoved: chapterDedupe.stats.duplicates
+        };
       } catch (error) {
         console.error('Chapter enrichment error:', error.message);
       }
@@ -517,7 +585,6 @@ class ApiService {
         comic = comic && typeof comic === 'object' ? comic : {};
       } catch (error) {
         console.error('Response optimization error:', error.message);
-        // Continue with unoptimized comic if optimization fails
       }
     }
 
@@ -525,9 +592,22 @@ class ApiService {
       status: 'success',
       data: comic,
       metadata: {
-        provider: detail.provider,
-        fallback: detail.fallback || false
+        provider: result?.provider || providersList[0],
+        fromCache: result?.fromCache || false,
+        source: result?.source || 'unknown'
       }
+    };
+  }
+
+  /**
+   * Get orchestrator and integrity statistics
+   * @returns {object} System statistics
+   */
+  getSystemStats() {
+    return {
+      orchestrator: scrapeOrchestrator.getStats(),
+      requestQueue: requestQueue.getStats(),
+      dataIntegrity: dataIntegrityService.getStats()
     };
   }
 }
@@ -536,4 +616,3 @@ class ApiService {
 const apiService = new ApiService();
 
 module.exports = apiService;
-

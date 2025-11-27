@@ -110,7 +110,10 @@ router.get('/terbaru',
       providers, // Multiple providers (comma-separated)
       advanced, // Use advanced processing
       enrich, // Enable data enrichment
-      optimize // Enable response optimization
+      optimize, // Enable response optimization
+      forceRefresh, // Force bypass cache
+      getAllPages, // Scrape multiple pages
+      maxPages // Max pages to scrape (for getAllPages)
     } = req.query;
 
     // Use advanced processing if requested
@@ -132,7 +135,10 @@ router.get('/terbaru',
           maxRating: maxRating ? parseFloat(maxRating) : undefined
         },
         enrich: enrich !== 'false',
-        optimize: optimize !== 'false'
+        optimize: optimize !== 'false',
+        forceRefresh: forceRefresh === 'true' || forceRefresh === '1',
+        getAllPages: getAllPages === 'true' || getAllPages === '1',
+        maxPages: maxPages ? parseInt(maxPages) : 5
       });
 
       return res.status(200).json(result);
@@ -447,6 +453,19 @@ router.get('/recommended',
 );
 
 // Dashboard endpoints
+// System stats endpoint (for monitoring data integrity, queue, orchestrator)
+router.get('/api/system/stats',
+  defaultRateLimiter,
+  (req, res) => {
+    try {
+      const stats = apiService.getSystemStats();
+      return responseApi(res, 200, 'success', stats);
+    } catch (error) {
+      return responseApi(res, 500, 'error', { message: error.message });
+    }
+  }
+);
+
 // Dashboard stats endpoint
 router.get('/api/dashboard/stats',
   defaultRateLimiter,
