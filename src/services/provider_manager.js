@@ -10,6 +10,7 @@ const { ValidationError } = require('../helper/error_handler');
  * Provider registry mapping with lazy loading to avoid circular dependencies
  */
 const providerRegistry = {
+  mangadex: () => require('./mangadex_scraper'),
   komikcast: () => require('./scraper_service'),
   shinigami: () => require('./shinigami_scraper'),
   aquareader: () => require('./aquareader_scraper')

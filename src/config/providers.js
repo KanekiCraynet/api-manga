@@ -4,6 +4,28 @@
  */
 
 const providers = {
+  mangadex: {
+    name: 'MangaDex',
+    baseUrl: 'https://mangadex.org',
+    apiUrl: 'https://api.mangadex.org',
+    enabled: true,
+    default: false,
+    features: {
+      latest: true,
+      popular: true,
+      recommended: true,
+      search: true,
+      detail: true,
+      read: true,
+      genre: true,
+      genreList: true
+    },
+    description: 'Official MangaDex API - largest manga database with high-quality scans',
+    rateLimit: {
+      requestsPerSecond: 5,
+      burstLimit: 10
+    }
+  },
   komikcast: {
     name: 'Komikcast',
     baseUrl: 'https://komikcast03.com',
