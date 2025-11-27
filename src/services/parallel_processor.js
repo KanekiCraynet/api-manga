@@ -150,7 +150,7 @@ class ParallelProcessor {
 
   /**
    * Process with race strategy
-   * Return first successful result
+   * Return first successful result immediately when any provider succeeds
    * @param {Array} providers - Array of provider IDs
    * @param {string} functionName - Scraper function name
    * @param {Array} args - Function arguments
@@ -160,40 +160,48 @@ class ParallelProcessor {
   static async processWithRace(providers, functionName, args = [], options = {}) {
     const { timeout = 30000 } = options;
 
-    const promises = providers.map(async (providerId) => {
-      try {
-        const result = await Promise.race([
-          executeScraper(providerId, functionName, ...args),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new ParseError(`Timeout for provider ${providerId}`)), timeout)
-          )
-        ]);
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      let completedCount = 0;
+      const errors = [];
 
-        return {
-          success: true,
-          provider: providerId,
-          data: result
-        };
-      } catch (error) {
-        return {
-          success: false,
-          provider: providerId,
-          error: error.message
-        };
+      providers.forEach((providerId) => {
+        const timeoutId = setTimeout(() => {
+          if (!resolved) {
+            errors.push({ provider: providerId, error: 'Timeout' });
+            completedCount++;
+            checkAllFailed();
+          }
+        }, timeout);
+
+        executeScraper(providerId, functionName, ...args)
+          .then((result) => {
+            clearTimeout(timeoutId);
+            if (!resolved) {
+              resolved = true;
+              resolve({
+                success: true,
+                provider: providerId,
+                data: result
+              });
+            }
+          })
+          .catch((error) => {
+            clearTimeout(timeoutId);
+            if (!resolved) {
+              errors.push({ provider: providerId, error: error.message });
+              completedCount++;
+              checkAllFailed();
+            }
+          });
+      });
+
+      function checkAllFailed() {
+        if (!resolved && completedCount >= providers.length) {
+          reject(new ParseError(`All providers failed: ${providers.join(', ')}`));
+        }
       }
     });
-
-    // Race all promises
-    const results = await Promise.allSettled(promises);
-
-    // Find first successful result
-    for (const result of results) {
-      if (result.status === 'fulfilled' && result.value.success) {
-        return result.value;
-      }
-    }
-
-    throw new ParseError(`All providers failed: ${providers.join(', ')}`);
   }
 }
 

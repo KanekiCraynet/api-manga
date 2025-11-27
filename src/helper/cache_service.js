@@ -187,22 +187,22 @@ class CacheService {
   }
 
   /**
-   * Compress value (simple JSON string compression)
-   * @param {*} value - Value to compress
-   * @returns {string} Compressed value
+   * Serialize value for storage (enables future compression support)
+   * @param {*} value - Value to serialize
+   * @returns {string} Serialized value
    */
   compress(value) {
-    // Simple compression: remove whitespace from JSON
+    // Currently uses JSON serialization - can be extended with actual compression (e.g., lz-string)
     return JSON.stringify(value);
   }
 
   /**
-   * Decompress value
-   * @param {string} compressed - Compressed value
-   * @returns {*} Decompressed value
+   * Deserialize value from storage
+   * @param {string} serialized - Serialized value
+   * @returns {*} Deserialized value
    */
-  decompress(compressed) {
-    return JSON.parse(compressed);
+  decompress(serialized) {
+    return JSON.parse(serialized);
   }
 
   /**
