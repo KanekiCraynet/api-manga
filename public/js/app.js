@@ -78,11 +78,21 @@ async function searchManga(keyword) {
 }
 
 async function getMangaDetail(slug) {
-    return fetchAPI(`/detail/${encodeURIComponent(slug)}`, { provider: currentProvider });
+    // Remove leading slash and /manga/ prefix if present
+    let cleanSlug = slug;
+    if (cleanSlug.startsWith('/')) cleanSlug = cleanSlug.substring(1);
+    if (cleanSlug.startsWith('manga/')) cleanSlug = cleanSlug.substring(6);
+
+    return fetchAPI(`/detail/${cleanSlug}`, { provider: currentProvider });
 }
 
 async function getChapterImages(slug) {
-    return fetchAPI(`/read/${encodeURIComponent(slug)}`, { provider: currentProvider });
+    // Remove leading slash and chapter/ prefix if present
+    let cleanSlug = slug;
+    if (cleanSlug.startsWith('/')) cleanSlug = cleanSlug.substring(1);
+    if (cleanSlug.startsWith('chapter/')) cleanSlug = cleanSlug.substring(8);
+
+    return fetchAPI(`/read/${cleanSlug}`, { provider: currentProvider });
 }
 
 async function getHealth() {
@@ -157,8 +167,17 @@ function renderPagination(container, currentPage, totalPages, hasNext, hasPrev) 
 }
 
 function renderMangaDetail(detail) {
-    const chapters = detail.chapter_list || detail.chapters || [];
+    // FIX: API returns 'chapter' (singular), not 'chapter_list' or 'chapters'
+    const chapters = detail.chapter || detail.chapter_list || detail.chapters || [];
     currentChapters = chapters;
+
+    // Handle genre - can be array or string
+    let genreHtml = '';
+    if (Array.isArray(detail.genre)) {
+        genreHtml = detail.genre.map(g => `<span>${typeof g === 'object' ? g.title : g}</span>`).join('');
+    } else if (typeof detail.genre === 'string' && detail.genre) {
+        genreHtml = detail.genre.split(',').map(g => `<span>${g.trim()}</span>`).join('');
+    }
 
     elements.detailContent.innerHTML = `
     <div class="detail-header">
@@ -172,9 +191,10 @@ function renderMangaDetail(detail) {
           <span>📊 ${detail.status || 'Ongoing'}</span>
           <span>🏷️ ${detail.type || 'Manga'}</span>
           ${detail.rating ? `<span>★ ${detail.rating}</span>` : ''}
+          ${detail.released ? `<span>📅 ${detail.released}</span>` : ''}
         </div>
-        <div class="detail-meta">
-          ${(detail.genre || '').split(',').map(g => `<span>${g.trim()}</span>`).join('')}
+        <div class="detail-meta genre-tags">
+          ${genreHtml}
         </div>
         <p class="detail-description">${detail.synopsis || detail.description || 'No description available.'}</p>
       </div>
@@ -183,8 +203,8 @@ function renderMangaDetail(detail) {
       <h3>📚 Daftar Chapter (${chapters.length})</h3>
       ${chapters.length > 0 ? chapters.slice(0, 50).map((ch, idx) => `
         <div class="chapter-item" data-href="${ch.href || ch.chapter_endpoint}" data-index="${idx}">
-          <span class="chapter-name">${ch.chapter_title || ch.name || `Chapter ${idx + 1}`}</span>
-          <span class="chapter-date">${ch.chapter_date || ch.date || ''}</span>
+          <span class="chapter-name">${ch.title || ch.chapter_title || ch.name || `Chapter ${idx + 1}`}</span>
+          <span class="chapter-date">${ch.date || ch.chapter_date || ''}</span>
         </div>
       `).join('') : '<p style="color: var(--text-muted); padding: 20px;">No chapters available</p>'}
       ${chapters.length > 50 ? `<p style="color: var(--text-muted); text-align: center; padding: 10px;">+ ${chapters.length - 50} more chapters</p>` : ''}
@@ -270,18 +290,27 @@ async function performSearch(keyword) {
 }
 
 async function openMangaDetail(href) {
-    // Extract slug from href
-    const slug = href.startsWith('/') ? href.substring(1) : href;
-
+    // Show modal immediately with loading state
     elements.detailModal.classList.add('active');
     elements.detailContent.innerHTML = '<div class="loading-skeleton" style="height: 400px;"></div>';
 
     try {
-        const data = await getMangaDetail(slug);
+        const data = await getMangaDetail(href);
         currentManga = data.data || data;
         renderMangaDetail(currentManga);
     } catch (error) {
-        elements.detailContent.innerHTML = '<p style="color: var(--error); text-align: center; padding: 40px;">Gagal memuat detail manga</p>';
+        console.error('Detail error:', error);
+        elements.detailContent.innerHTML = `
+            <div style="text-align: center; padding: 60px 20px;">
+                <p style="font-size: 3rem; margin-bottom: 20px;">😢</p>
+                <p style="color: var(--error); font-size: 1.2rem; margin-bottom: 10px;">Gagal memuat detail manga</p>
+                <p style="color: var(--text-muted);">${error.message || 'Unknown error'}</p>
+                <button onclick="elements.detailModal.classList.remove('active')" 
+                        style="margin-top: 20px; padding: 10px 24px; background: var(--accent); border: none; border-radius: 8px; color: white; cursor: pointer;">
+                    Tutup
+                </button>
+            </div>
+        `;
     }
 }
 
