@@ -8,14 +8,25 @@ const { dataIntegrityService } = require('./data_integrity');
 const cacheService = require('../helper/cache_service');
 const { executeScraper, listProviders } = require('./provider_manager');
 
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
+
 class ScrapeOrchestrator {
   constructor() {
     this.activeOperations = new Map();
     this.operationHistory = [];
-    this.maxHistorySize = 100;
-    
-    // Stale thresholds per data type (in ms)
-    this.staleThresholds = {
+    this.maxHistorySize = isVercel ? 20 : 100; // Reduced for serverless memory
+
+    // Stale thresholds per data type (in ms) - optimized for Vercel
+    this.staleThresholds = isVercel ? {
+      latest: 60 * 1000,        // 1 minute (faster refresh)
+      popular: 5 * 60 * 1000,   // 5 minutes
+      recommended: 5 * 60 * 1000,
+      search: 30 * 1000,        // 30 seconds
+      detail: 5 * 60 * 1000,    // 5 minutes
+      chapter: 10 * 60 * 1000,  // 10 minutes
+      genre: 5 * 60 * 1000
+    } : {
       latest: 3 * 60 * 1000,     // 3 minutes for latest
       popular: 10 * 60 * 1000,   // 10 minutes for popular
       recommended: 10 * 60 * 1000,
@@ -110,7 +121,7 @@ class ScrapeOrchestrator {
           fields: ['title', 'href']
         });
         processedData = dedupeResult.items;
-        
+
         // Log deduplication stats
         if (dedupeResult.stats.duplicates > 0) {
           console.log(`Deduplication: ${dedupeResult.stats.duplicates} duplicates removed from ${operation}`);
@@ -137,7 +148,7 @@ class ScrapeOrchestrator {
       dataIntegrityService.updateFreshness(freshnessKey, {
         operation,
         provider: providerId,
-        itemCount: Array.isArray(processedData) ? processedData.length : 
+        itemCount: Array.isArray(processedData) ? processedData.length :
           (processedData?.data?.length || 0)
       });
 
@@ -155,7 +166,7 @@ class ScrapeOrchestrator {
         providerId,
         success: true,
         duration: Date.now() - startTime,
-        itemCount: Array.isArray(processedData) ? processedData.length : 
+        itemCount: Array.isArray(processedData) ? processedData.length :
           (processedData?.data?.length || 0)
       });
 
@@ -244,7 +255,7 @@ class ScrapeOrchestrator {
             args,
             deduplication: false // We'll deduplicate after aggregation
           }),
-          new Promise((_, reject) => 
+          new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Provider timeout')), timeout)
           )
         ]);
@@ -320,7 +331,7 @@ class ScrapeOrchestrator {
       if (!result || !result.data) return;
 
       let data = result.data;
-      
+
       // Handle paginated results
       if (data.data && Array.isArray(data.data)) {
         data = data.data;
@@ -405,10 +416,10 @@ class ScrapeOrchestrator {
             [...allData, ...pageData],
             { strategy: 'first', fields: ['title', 'href'] }
           );
-          
+
           const newItems = dedupeResult.items.length - allData.length;
           const duplicateRate = 1 - (newItems / pageData.length);
-          
+
           if (duplicateRate >= duplicateThreshold) {
             console.log(`Stopping pagination at page ${currentPage}: ${(duplicateRate * 100).toFixed(0)}% duplicates`);
             break;
@@ -444,7 +455,7 @@ class ScrapeOrchestrator {
           console.log(`Stopping pagination at page ${currentPage}: ${error.message}`);
           break;
         }
-        
+
         currentPage++;
       }
     }
@@ -529,14 +540,14 @@ class ScrapeOrchestrator {
   isProviderHealthy(providerId) {
     const health = this.providerHealth.get(providerId);
     if (!health) return true; // New provider, assume healthy
-    
+
     // Unhealthy if 5 consecutive failures
     if (health.consecutiveFailures >= 5) return false;
-    
+
     // Unhealthy if failure rate > 50% (min 10 requests)
     const total = health.successCount + health.failureCount;
     if (total >= 10 && health.failureCount / total > 0.5) return false;
-    
+
     return true;
   }
 
@@ -568,7 +579,7 @@ class ScrapeOrchestrator {
       providerStats[providerId] = {
         ...health,
         successRate: total > 0 ? ((health.successCount / total) * 100).toFixed(2) + '%' : 'N/A',
-        avgResponseTime: health.successCount > 0 ? 
+        avgResponseTime: health.successCount > 0 ?
           Math.round(health.totalResponseTime / health.successCount) + 'ms' : 'N/A',
         healthy: this.isProviderHealthy(providerId)
       };

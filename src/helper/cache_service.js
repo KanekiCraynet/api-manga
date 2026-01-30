@@ -4,14 +4,17 @@
  * Features: Multi-level caching, cache warming, invalidation strategies, compression
  */
 
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
+
 class CacheService {
   constructor(options = {}) {
     // L1 Cache: Fast in-memory cache
     this.l1Cache = new Map();
-    
+
     // L2 Cache: Secondary cache (can be extended to Redis/Disk)
     this.l2Cache = new Map();
-    
+
     // Cache statistics
     this.stats = {
       hits: 0,
@@ -21,20 +24,22 @@ class CacheService {
       compressions: 0,
       decompressions: 0
     };
-    
-    // Configuration
-    this.defaultTTL = options.defaultTTL || 5 * 60 * 1000; // 5 minutes
-    this.maxSize = options.maxSize || 1000; // Max cache entries
+
+    // Configuration - optimized for Vercel serverless
+    this.defaultTTL = options.defaultTTL || (isVercel ? 2 * 60 * 1000 : 5 * 60 * 1000);
+    this.maxSize = options.maxSize || (isVercel ? 200 : 1000); // Smaller for serverless memory
     this.cleanupInterval = options.cleanupInterval || 60 * 1000; // 1 minute
-    this.enableCompression = options.enableCompression !== false; // Enable by default
+    this.enableCompression = isVercel ? false : (options.enableCompression !== false); // Disable in Vercel (CPU overhead)
     this.compressionThreshold = options.compressionThreshold || 1024; // 1KB
-    
+
     // Cache warming queue
     this.warmingQueue = [];
     this.isWarming = false;
-    
-    // Start cleanup interval
-    this.startCleanup();
+
+    // Only start cleanup interval in non-serverless environments
+    if (!isVercel) {
+      this.startCleanup();
+    }
   }
 
   /**
@@ -49,7 +54,7 @@ class CacheService {
     delete cacheParams._t;
     delete cacheParams.timestamp;
     delete cacheParams.nocache;
-    
+
     const paramsString = Object.keys(cacheParams)
       .sort()
       .filter(key => cacheParams[key] !== undefined && cacheParams[key] !== null)
@@ -82,18 +87,18 @@ class CacheService {
     // Try L1 cache first
     let item = this.l1Cache.get(key);
     let cacheLevel = 'L1';
-    
+
     if (!item || this.isExpired(item)) {
       // Try L2 cache
       item = this.l2Cache.get(key);
       cacheLevel = 'L2';
-      
+
       if (item && !this.isExpired(item)) {
         // Promote to L1
         this.l1Cache.set(key, item);
       }
     }
-    
+
     if (!item || this.isExpired(item)) {
       this.stats.misses++;
       if (item && this.isExpired(item)) {
@@ -101,9 +106,9 @@ class CacheService {
       }
       return null;
     }
-    
+
     this.stats.hits++;
-    
+
     // Decompress if needed
     let value = item.value;
     if (item.compressed && this.enableCompression) {
@@ -116,11 +121,11 @@ class CacheService {
         return null;
       }
     }
-    
+
     // Update access time
     item.lastAccessed = Date.now();
     item.accessCount = (item.accessCount || 0) + 1;
-    
+
     return value;
   }
 
@@ -145,11 +150,11 @@ class CacheService {
     if (this.l1Cache.size >= this.maxSize) {
       this.evictLRU();
     }
-    
+
     const expiresAt = Date.now() + (ttl || this.defaultTTL);
     let cacheValue = value;
     let compressed = false;
-    
+
     // Compress large values
     if (this.enableCompression && options.compress !== false) {
       const valueSize = JSON.stringify(value).length;
@@ -164,7 +169,7 @@ class CacheService {
         }
       }
     }
-    
+
     const item = {
       value: cacheValue,
       compressed,
@@ -175,14 +180,14 @@ class CacheService {
       level: options.level || 'L1',
       tags: options.tags || []
     };
-    
+
     // Store in appropriate cache level
     if (options.level === 'L2' || this.l1Cache.size >= this.maxSize * 0.8) {
       this.l2Cache.set(key, item);
     } else {
       this.l1Cache.set(key, item);
     }
-    
+
     this.stats.sets++;
   }
 
@@ -210,23 +215,23 @@ class CacheService {
    */
   evictLRU() {
     if (this.l1Cache.size === 0) return;
-    
+
     // Find least recently used item
     let lruKey = null;
     let lruTime = Date.now();
-    
+
     this.l1Cache.forEach((item, key) => {
       if (item.lastAccessed < lruTime) {
         lruTime = item.lastAccessed;
         lruKey = key;
       }
     });
-    
+
     if (lruKey) {
       // Move to L2 or delete
       const item = this.l1Cache.get(lruKey);
       this.l1Cache.delete(lruKey);
-      
+
       if (this.l2Cache.size < this.maxSize) {
         this.l2Cache.set(lruKey, { ...item, level: 'L2' });
       }
@@ -240,11 +245,11 @@ class CacheService {
   delete(key) {
     const l1Deleted = this.l1Cache.delete(key);
     const l2Deleted = this.l2Cache.delete(key);
-    
+
     if (l1Deleted || l2Deleted) {
       this.stats.deletes++;
     }
-    
+
     return l1Deleted || l2Deleted;
   }
 
@@ -256,7 +261,7 @@ class CacheService {
   invalidatePattern(pattern) {
     let count = 0;
     const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-    
+
     // Invalidate L1
     this.l1Cache.forEach((item, key) => {
       if (regex.test(key)) {
@@ -264,7 +269,7 @@ class CacheService {
         count++;
       }
     });
-    
+
     // Invalidate L2
     this.l2Cache.forEach((item, key) => {
       if (regex.test(key)) {
@@ -272,7 +277,7 @@ class CacheService {
         count++;
       }
     });
-    
+
     this.stats.deletes += count;
     return count;
   }
@@ -285,7 +290,7 @@ class CacheService {
   invalidateByTags(tags) {
     let count = 0;
     const tagSet = new Set(tags);
-    
+
     // Invalidate L1
     this.l1Cache.forEach((item, key) => {
       if (item.tags && item.tags.some(tag => tagSet.has(tag))) {
@@ -293,7 +298,7 @@ class CacheService {
         count++;
       }
     });
-    
+
     // Invalidate L2
     this.l2Cache.forEach((item, key) => {
       if (item.tags && item.tags.some(tag => tagSet.has(tag))) {
@@ -301,7 +306,7 @@ class CacheService {
         count++;
       }
     });
-    
+
     this.stats.deletes += count;
     return count;
   }
@@ -324,14 +329,14 @@ class CacheService {
       this.warmingQueue.push(...items);
       return;
     }
-    
+
     this.isWarming = true;
-    
+
     try {
       for (const item of items) {
         this.set(item.key, item.value, item.ttl, item.options || {});
       }
-      
+
       // Process queue
       while (this.warmingQueue.length > 0) {
         const item = this.warmingQueue.shift();
@@ -353,7 +358,7 @@ class CacheService {
   getEntries(options = {}) {
     const { limit = 100, offset = 0, pattern } = options;
     const entries = [];
-    
+
     // Collect L1 cache entries
     this.l1Cache.forEach((item, key) => {
       if (!pattern || key.includes(pattern)) {
@@ -371,7 +376,7 @@ class CacheService {
         });
       }
     });
-    
+
     // Collect L2 cache entries
     this.l2Cache.forEach((item, key) => {
       if (!pattern || key.includes(pattern)) {
@@ -389,14 +394,14 @@ class CacheService {
         });
       }
     });
-    
+
     // Sort by last accessed (most recent first)
     entries.sort((a, b) => b.lastAccessed - a.lastAccessed);
-    
+
     // Apply pagination
     return entries.slice(offset, offset + limit);
   }
-  
+
   /**
    * Get stats for a specific cache entry
    * @param {string} key - Cache key
@@ -405,16 +410,16 @@ class CacheService {
   getEntryStats(key) {
     let item = this.l1Cache.get(key);
     let level = 'L1';
-    
+
     if (!item) {
       item = this.l2Cache.get(key);
       level = 'L2';
     }
-    
+
     if (!item) {
       return null;
     }
-    
+
     return {
       key,
       level,
@@ -429,7 +434,7 @@ class CacheService {
       tags: item.tags || []
     };
   }
-  
+
   /**
    * Get cache statistics
    * @returns {object} Cache statistics
@@ -574,7 +579,7 @@ class CacheService {
       const currentJson = res.json.bind(res);
 
       // Override json method to cache response
-      res.json = function(data) {
+      res.json = function (data) {
         // Cache the response
         self.set(key, data, ttl);
         res.set('X-Cache', 'MISS');

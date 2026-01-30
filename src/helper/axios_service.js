@@ -1,6 +1,9 @@
 const axios = require('axios');
 const { NetworkError, NotFoundError, retryWithBackoff } = require('./error_handler');
 
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
+
 // User agents for rotation (updated with latest browser versions)
 const userAgents = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -76,7 +79,7 @@ const detectCloudflareBlock = (response) => {
   // Check HTML content for Cloudflare patterns
   if (isHtml && typeof data === 'string') {
     const dataLower = data.toLowerCase();
-    
+
     // Check title patterns
     for (const title of CLOUDFLARE_PATTERNS.titles) {
       if (dataLower.includes(title.toLowerCase())) {
@@ -105,7 +108,7 @@ const detectCloudflareBlock = (response) => {
 
   // Determine if blocked based on confidence
   result.isBlocked = result.confidence >= 50;
-  
+
   if (result.isBlocked && !result.blockType) {
     result.blockType = status === 403 ? 'forbidden' : 'challenge';
   }
@@ -214,7 +217,7 @@ const verifyResponse = (response, options = {}) => {
 const getVerificationStats = () => ({
   ...verificationStats,
   blockedUrls: Array.from(verificationStats.blockedUrls.entries()).slice(-10),
-  successRate: verificationStats.totalRequests > 0 
+  successRate: verificationStats.totalRequests > 0
     ? ((verificationStats.successfulRequests / verificationStats.totalRequests) * 100).toFixed(2) + '%'
     : 'N/A'
 });
@@ -232,36 +235,41 @@ const resetVerificationStats = () => {
   verificationStats.blockedUrls.clear();
 };
 
-// Create axios instance with default configuration
+// HTTP agents - only use for non-serverless (keep-alive doesn't help in serverless)
+const httpAgent = !isVercel ? new (require('http').Agent)({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10
+}) : undefined;
+
+const httpsAgent = !isVercel ? new (require('https').Agent)({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  rejectUnauthorized: true
+}) : undefined;
+
+// Create axios instance with Vercel-optimized configuration
 const axiosInstance = axios.create({
-  timeout: 30000, // 30 seconds timeout
+  timeout: isVercel ? 6000 : 30000, // 6s for Vercel (leaves buffer for processing)
   headers: {
     'User-Agent': getNextUserAgent(),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
+    'Connection': isVercel ? 'close' : 'keep-alive', // Close for serverless
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'none',
     'Cache-Control': 'max-age=0'
   },
-  maxRedirects: 5,
+  maxRedirects: isVercel ? 3 : 5, // Fewer redirects for faster response
   validateStatus: (status) => status >= 200 && status < 500, // Don't throw on 4xx
-  httpAgent: new (require('http').Agent)({
-    keepAlive: true,
-    keepAliveMsecs: 30000,
-    maxSockets: 50,
-    maxFreeSockets: 10
-  }),
-  httpsAgent: new (require('https').Agent)({
-    keepAlive: true,
-    keepAliveMsecs: 30000,
-    maxSockets: 50,
-    maxFreeSockets: 10,
-    rejectUnauthorized: true
-  })
+  httpAgent,
+  httpsAgent
 });
 
 /**
@@ -277,8 +285,8 @@ const axiosInstance = axios.create({
  */
 const AxiosService = async (url, options = {}) => {
   const {
-    timeout = 30000,
-    retries = 3,
+    timeout = isVercel ? 6000 : 30000, // Vercel-optimized default
+    retries = isVercel ? 1 : 3,        // Minimal retries for serverless
     rotateUserAgent = true,
     verify = true,
     verifyOptions = {}
@@ -306,7 +314,7 @@ const AxiosService = async (url, options = {}) => {
   }
 
   // Add additional headers to avoid detection
-  config.headers['Accept'] = options.acceptJson 
+  config.headers['Accept'] = options.acceptJson
     ? 'application/json, text/plain, */*'
     : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8';
   config.headers['Accept-Language'] = 'en-US,en;q=0.9,id;q=0.8';
@@ -382,14 +390,14 @@ const AxiosService = async (url, options = {}) => {
     if (error.response) {
       const status = error.response.status;
       const message = error.response.statusText || 'Request failed';
-      
+
       // Check for Cloudflare on error response
       const cloudflareCheck = detectCloudflareBlock(error.response);
       if (cloudflareCheck.isBlocked) {
         verificationStats.cloudflareBlocks++;
         throw new NetworkError(`Cloudflare protection active - ${cloudflareCheck.blockType}`);
       }
-      
+
       if (status === 404) {
         throw new NotFoundError('Resource not found');
       } else if (status >= 500) {
@@ -419,13 +427,13 @@ const AxiosService = async (url, options = {}) => {
 const batchRequest = async (urls, options = {}) => {
   const { concurrent = 5 } = options;
   const results = [];
-  
+
   for (let i = 0; i < urls.length; i += concurrent) {
     const batch = urls.slice(i, i + concurrent);
     const batchResults = await Promise.allSettled(
       batch.map(url => AxiosService(url, options))
     );
-    
+
     results.push(...batchResults.map((result, index) => ({
       url: batch[index],
       success: result.status === 'fulfilled',
@@ -433,7 +441,7 @@ const batchRequest = async (urls, options = {}) => {
       error: result.status === 'rejected' ? result.reason : null
     })));
   }
-  
+
   return results;
 };
 

@@ -3,14 +3,30 @@ const path = require('path');
 const app = express();
 const cors = require('cors');
 const helmet = require('helmet').default;
+const compression = require('compression');
 const { router } = require('./router');
 require('dotenv').config();
+
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
 
 // Trust proxy for rate limiting (if behind reverse proxy)
 app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors());
+
+// Compression middleware - optimize for faster responses
+app.use(compression({
+  threshold: 512, // Only compress responses > 512 bytes
+  level: isVercel ? 1 : 6, // Lower compression level for Vercel (faster)
+  filter: (req, res) => {
+    // Don't compress if client doesn't support it
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {

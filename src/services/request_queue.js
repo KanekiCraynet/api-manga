@@ -10,7 +10,7 @@ class RequestQueue {
     this.retryAttempts = options.retryAttempts || 3;
     this.retryDelay = options.retryDelay || 1000;
     this.timeout = options.timeout || 30000;
-    
+
     this.queue = [];
     this.running = 0;
     this.completed = 0;
@@ -21,7 +21,7 @@ class RequestQueue {
       avgProcessingTime: 0,
       lastProcessed: null
     };
-    
+
     // Provider-specific rate limiting
     this.providerLimits = new Map();
     this.providerLastRequest = new Map();
@@ -73,11 +73,11 @@ class RequestQueue {
    */
   async processQueue() {
     if (this.paused) return;
-    
+
     while (this.running < this.maxConcurrent && this.queue.length > 0) {
       const request = this.getNextRequest();
       if (!request) break;
-      
+
       this.running++;
       this.processRequest(request);
     }
@@ -89,22 +89,22 @@ class RequestQueue {
    */
   getNextRequest() {
     const now = Date.now();
-    
+
     for (let i = 0; i < this.queue.length; i++) {
       const request = this.queue[i];
       const providerId = request.providerId;
       const lastRequest = this.providerLastRequest.get(providerId) || 0;
-      
+
       if (now - lastRequest >= this.providerMinDelay) {
         return this.queue.splice(i, 1)[0];
       }
     }
-    
+
     // If all requests need to wait, schedule next check
     if (this.queue.length > 0) {
       setTimeout(() => this.processQueue(), this.providerMinDelay);
     }
-    
+
     return null;
   }
 
@@ -114,19 +114,19 @@ class RequestQueue {
    */
   async processRequest(request) {
     const startTime = Date.now();
-    
+
     try {
       // Update provider last request time
       this.providerLastRequest.set(request.providerId, Date.now());
-      
+
       // Execute with timeout
       const result = await Promise.race([
         request.fn(),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Request timeout')), this.timeout)
         )
       ]);
-      
+
       this.handleSuccess(request, result, startTime);
     } catch (error) {
       this.handleError(request, error, startTime);
@@ -138,13 +138,13 @@ class RequestQueue {
    */
   handleSuccess(request, result, startTime) {
     const processingTime = Date.now() - startTime;
-    
+
     this.running--;
     this.completed++;
     this.stats.totalProcessed++;
     this.stats.lastProcessed = Date.now();
     this.updateAvgProcessingTime(processingTime);
-    
+
     request.resolve(result);
     this.processQueue();
   }
@@ -154,15 +154,15 @@ class RequestQueue {
    */
   async handleError(request, error, startTime) {
     request.attempts++;
-    
+
     if (request.attempts < this.retryAttempts) {
       // Exponential backoff
       const delay = this.retryDelay * Math.pow(2, request.attempts - 1);
-      
+
       console.warn(`Request failed (attempt ${request.attempts}/${this.retryAttempts}), retrying in ${delay}ms:`, error.message);
-      
+
       await new Promise(resolve => setTimeout(resolve, delay));
-      
+
       // Re-add to queue with priority
       request.options.priority = true;
       this.queue.unshift(request);
@@ -172,7 +172,7 @@ class RequestQueue {
       this.running--;
       this.failed++;
       this.stats.totalFailed++;
-      
+
       request.reject(error);
       this.processQueue();
     }
@@ -183,7 +183,7 @@ class RequestQueue {
    */
   updateAvgProcessingTime(time) {
     const total = this.stats.totalProcessed;
-    this.stats.avgProcessingTime = 
+    this.stats.avgProcessingTime =
       (this.stats.avgProcessingTime * (total - 1) + time) / total;
   }
 
@@ -226,14 +226,17 @@ class RequestQueue {
   }
 }
 
-// Singleton instance
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
+
+// Singleton instance with Vercel-optimized defaults
 const requestQueue = new RequestQueue({
-  maxConcurrent: 5,
-  maxQueueSize: 100,
-  retryAttempts: 3,
-  retryDelay: 1000,
-  timeout: 30000,
-  providerMinDelay: 500
+  maxConcurrent: isVercel ? 3 : 5,           // Fewer concurrent requests in serverless
+  maxQueueSize: isVercel ? 50 : 100,         // Smaller queue for memory efficiency
+  retryAttempts: isVercel ? 1 : 3,           // Minimal retries to avoid timeout
+  retryDelay: isVercel ? 500 : 1000,         // Faster retry
+  timeout: isVercel ? 8000 : 30000,          // 8s for Vercel Hobby (10s limit)
+  providerMinDelay: isVercel ? 100 : 500     // Faster provider cycling
 });
 
 module.exports = {

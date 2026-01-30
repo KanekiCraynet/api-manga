@@ -5,19 +5,23 @@
 
 const crypto = require('crypto');
 
+// Detect Vercel environment
+const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL_ENV;
+
 class DataIntegrityService {
   constructor() {
-    // Hash storage for tracking processed data
+    // Hash storage for tracking processed data - smaller for serverless
     this.dataHashes = new Map();
-    this.hashExpiry = 24 * 60 * 60 * 1000; // 24 hours
-    
+    this.hashExpiry = isVercel ? 6 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000; // 6h vs 24h
+    this.maxHashSize = isVercel ? 500 : 5000; // Cap size for memory
+
     // Freshness tracking
     this.freshnessMap = new Map();
-    this.staleThreshold = 5 * 60 * 1000; // 5 minutes for latest data
-    
+    this.staleThreshold = isVercel ? 2 * 60 * 1000 : 5 * 60 * 1000; // 2 min vs 5 min
+
     // Deduplication index
     this.dedupeIndex = new Map();
-    
+
     // Statistics
     this.stats = {
       duplicatesDetected: 0,
@@ -26,19 +30,22 @@ class DataIntegrityService {
       staleDataRefreshed: 0
     };
 
-    // Start cleanup interval
-    this.startCleanup();
+    // Only start cleanup interval in non-serverless
+    if (!isVercel) {
+      this.startCleanup();
+    }
   }
 
   /**
    * Generate content hash for data
+   * Uses djb2 for Vercel (faster), MD5 for standard (more accurate)
    * @param {object|Array} data - Data to hash
    * @param {Array} fields - Fields to include in hash
    * @returns {string} Content hash
    */
   generateHash(data, fields = ['title', 'href']) {
     if (!data) return '';
-    
+
     const content = fields
       .map(field => {
         const value = this.getNestedValue(data, field);
@@ -46,8 +53,26 @@ class DataIntegrityService {
       })
       .filter(Boolean)
       .join('|');
-    
+
+    // Use faster djb2 hash for Vercel, MD5 for standard
+    if (isVercel) {
+      return this.djb2Hash(content);
+    }
     return crypto.createHash('md5').update(content).digest('hex');
+  }
+
+  /**
+   * Fast djb2 hash function (much faster than MD5)
+   * @param {string} str - String to hash
+   * @returns {string} Hash string
+   */
+  djb2Hash(str) {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash) + str.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
   }
 
   /**
@@ -57,13 +82,13 @@ class DataIntegrityService {
    */
   generateUniqueId(item) {
     if (!item) return '';
-    
+
     // Prioritize URL-based ID
     if (item.href) {
       const urlParts = item.href.split('/').filter(Boolean);
       return `comic_${urlParts[urlParts.length - 1] || this.generateHash(item)}`;
     }
-    
+
     // Fallback to hash-based ID
     return `comic_${this.generateHash(item)}`;
   }
@@ -77,15 +102,15 @@ class DataIntegrityService {
   isProcessed(hash, context = 'default') {
     const key = `${context}:${hash}`;
     const entry = this.dataHashes.get(key);
-    
+
     if (!entry) return false;
-    
+
     // Check expiry
     if (Date.now() > entry.expiresAt) {
       this.dataHashes.delete(key);
       return false;
     }
-    
+
     return true;
   }
 
@@ -97,7 +122,7 @@ class DataIntegrityService {
    */
   markProcessed(hash, context = 'default', metadata = {}) {
     const key = `${context}:${hash}`;
-    
+
     this.dataHashes.set(key, {
       hash,
       context,
@@ -105,7 +130,7 @@ class DataIntegrityService {
       processedAt: Date.now(),
       expiresAt: Date.now() + this.hashExpiry
     });
-    
+
     this.stats.dataProcessed++;
   }
 
@@ -133,13 +158,13 @@ class DataIntegrityService {
 
     items.forEach((item, index) => {
       if (!item || typeof item !== 'object') return;
-      
+
       const hash = this.generateHash(item, fields);
       const fuzzyKey = this.generateFuzzyKey(item);
-      
+
       // Check exact hash match
       let existingEntry = uniqueMap.get(hash);
-      
+
       // Check fuzzy match if no exact match
       if (!existingEntry && fuzzyKey) {
         for (const [key, entry] of uniqueMap.entries()) {
@@ -180,7 +205,7 @@ class DataIntegrityService {
           _hash: hash,
           _processedAt: Date.now()
         };
-        
+
         uniqueMap.set(hash, { item: enrichedItem, index });
         processOrder.push(hash);
       }
@@ -208,7 +233,7 @@ class DataIntegrityService {
    */
   generateFuzzyKey(item) {
     if (!item || !item.title) return '';
-    
+
     return item.title
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '')
@@ -223,16 +248,16 @@ class DataIntegrityService {
    */
   isFuzzyMatch(item1, item2) {
     if (!item1 || !item2) return false;
-    
+
     // Title similarity check
     const title1 = (item1.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const title2 = (item2.title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    
+
     if (!title1 || !title2) return false;
-    
+
     // Exact match after normalization
     if (title1 === title2) return true;
-    
+
     // Levenshtein distance for fuzzy matching (simple implementation)
     const similarity = this.calculateSimilarity(title1, title2);
     return similarity > 0.85; // 85% similarity threshold
@@ -247,26 +272,26 @@ class DataIntegrityService {
   calculateSimilarity(str1, str2) {
     if (str1 === str2) return 1;
     if (!str1 || !str2) return 0;
-    
+
     const longer = str1.length > str2.length ? str1 : str2;
     const shorter = str1.length > str2.length ? str2 : str1;
-    
+
     if (longer.length === 0) return 1;
-    
+
     // Check if shorter is substring of longer
     if (longer.includes(shorter)) {
       return shorter.length / longer.length;
     }
-    
+
     // Simple character overlap calculation
     let matches = 0;
     const shorterChars = shorter.split('');
     const longerChars = longer.split('');
-    
+
     shorterChars.forEach((char, i) => {
       if (longerChars[i] === char) matches++;
     });
-    
+
     return matches / longer.length;
   }
 
@@ -277,16 +302,16 @@ class DataIntegrityService {
    */
   getQualityScore(item) {
     if (!item) return 0;
-    
+
     let score = 0;
-    
+
     if (item.title && item.title.length > 0) score += 10;
     if (item.thumbnail && item.thumbnail.length > 10) score += 15;
     if (item.description && item.description.length > 50) score += 15;
     if (item.rating && parseFloat(item.rating) > 0) score += 10;
     if (item.chapter && item.chapter.length > 0) score += 10;
     if (item.genre) {
-      const genreCount = Array.isArray(item.genre) ? item.genre.length : 
+      const genreCount = Array.isArray(item.genre) ? item.genre.length :
         (typeof item.genre === 'string' ? item.genre.split(',').length : 0);
       score += Math.min(genreCount * 3, 15);
     }
@@ -294,7 +319,7 @@ class DataIntegrityService {
     if (item.status && item.status.length > 0) score += 5;
     if (item.type && item.type.length > 0) score += 5;
     if (item.href && item.href.length > 0) score += 5;
-    
+
     return score;
   }
 
@@ -308,20 +333,20 @@ class DataIntegrityService {
   mergeItems(primary, secondary, fields = []) {
     if (!primary) return secondary;
     if (!secondary) return primary;
-    
+
     const merged = { ...primary };
-    
+
     fields.forEach(field => {
       const primaryVal = primary[field];
       const secondaryVal = secondary[field];
-      
+
       if (!primaryVal && secondaryVal) {
         merged[field] = secondaryVal;
       } else if (Array.isArray(primaryVal) && Array.isArray(secondaryVal)) {
         // Merge arrays
         const combined = [...primaryVal];
         secondaryVal.forEach(item => {
-          const exists = combined.some(existing => 
+          const exists = combined.some(existing =>
             JSON.stringify(existing) === JSON.stringify(item)
           );
           if (!exists) combined.push(item);
@@ -334,13 +359,13 @@ class DataIntegrityService {
         }
       }
     });
-    
+
     // Track sources
     merged._sources = [
       ...(primary._sources || [primary._source || 'unknown']),
       secondary._source || 'unknown'
     ].filter((v, i, a) => a.indexOf(v) === i);
-    
+
     return merged;
   }
 
@@ -353,14 +378,14 @@ class DataIntegrityService {
   isStale(key, threshold = null) {
     const entry = this.freshnessMap.get(key);
     if (!entry) return true;
-    
+
     const effectiveThreshold = threshold || this.staleThreshold;
     const isStale = Date.now() - entry.timestamp > effectiveThreshold;
-    
+
     if (isStale) {
       this.stats.staleDataRefreshed++;
     }
-    
+
     return isStale;
   }
 
@@ -464,14 +489,14 @@ class DataIntegrityService {
     const dedupeKey = `dedupe_${context}`;
     const previousHashes = this.dedupeIndex.get(dedupeKey) || new Set();
     const currentHashes = new Set();
-    
+
     const newItems = [];
     const existingItems = [];
 
     currentData.forEach(item => {
       const hash = this.generateHash(item);
       currentHashes.add(hash);
-      
+
       if (previousHashes.has(hash)) {
         existingItems.push(item);
       } else {
@@ -490,8 +515,8 @@ class DataIntegrityService {
         total: currentData.length,
         new: newItems.length,
         existing: existingItems.length,
-        newRate: currentData.length > 0 
-          ? ((newItems.length / currentData.length) * 100).toFixed(2) + '%' 
+        newRate: currentData.length > 0
+          ? ((newItems.length / currentData.length) * 100).toFixed(2) + '%'
           : '0.00%'
       }
     };
@@ -515,14 +540,14 @@ class DataIntegrityService {
    */
   cleanup() {
     const now = Date.now();
-    
+
     // Cleanup hash map
     for (const [key, entry] of this.dataHashes.entries()) {
       if (now > entry.expiresAt) {
         this.dataHashes.delete(key);
       }
     }
-    
+
     // Cleanup freshness map (keep entries for 1 hour)
     for (const [key, entry] of this.freshnessMap.entries()) {
       if (now - entry.timestamp > 60 * 60 * 1000) {
