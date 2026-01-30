@@ -1,89 +1,147 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
-
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/10.1.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/10.1.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/10.1.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
-
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manga API - Baca manga favorit dari berbagai sumber">
+  <title>Manga API - Browse & Read Manga</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="container">
+      <a href="/" class="logo">
+        <span class="logo-icon">📚</span>
+        <span class="logo-text">MangaAPI</span>
+      </a>
+      <nav class="nav">
+        <a href="/" class="nav-link active">Home</a>
+        <a href="#popular" class="nav-link">Popular</a>
+        <a href="#genres" class="nav-link">Genres</a>
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+      </nav>
+      <div class="header-actions">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="Cari manga..." autocomplete="off">
+          <button id="searchBtn" class="btn-search">🔍</button>
+        </div>
+        <select id="providerSelect" class="provider-select">
+          <option value="mangadex">MangaDex</option>
+          <option value="komikcast">Komikcast</option>
+          <option value="shinigami">Shinigami</option>
+          <option value="aquareader">Aquareader</option>
+        </select>
+        <button id="themeToggle" class="btn-theme">🌙</button>
+      </div>
     </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
+  </header>
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <h1 class="hero-title">Baca Manga Favorit Kamu</h1>
+      <p class="hero-subtitle">Akses ribuan manga dari berbagai sumber dalam satu platform</p>
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="stat-value" id="totalManga">10,000+</span>
+          <span class="stat-label">Manga</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value">4</span>
+          <span class="stat-label">Providers</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="cacheHitRate">0%</span>
+          <span class="stat-label">Cache Hit</span>
+        </div>
+      </div>
+    </div>
+  </section>
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
-        }
-      });
-    </script>
-  </body>
+  <!-- Main Content -->
+  <main class="main">
+    <div class="container">
+      <!-- Latest Section -->
+      <section class="section" id="latest">
+        <div class="section-header">
+          <h2 class="section-title">🆕 Manga Terbaru</h2>
+          <div class="section-controls">
+            <button id="refreshLatest" class="btn-refresh">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="manga-grid" id="latestGrid">
+          <div class="loading-skeleton"></div>
+        </div>
+        <div class="pagination" id="latestPagination"></div>
+      </section>
+
+      <!-- Popular Section -->
+      <section class="section" id="popular">
+        <div class="section-header">
+          <h2 class="section-title">🔥 Popular</h2>
+        </div>
+        <div class="manga-grid" id="popularGrid">
+          <div class="loading-skeleton"></div>
+        </div>
+      </section>
+
+      <!-- Search Results (Hidden by default) -->
+      <section class="section hidden" id="searchResults">
+        <div class="section-header">
+          <h2 class="section-title">🔍 Hasil Pencarian: <span id="searchQuery"></span></h2>
+          <button id="clearSearch" class="btn-secondary">✕ Tutup</button>
+        </div>
+        <div class="manga-grid" id="searchGrid"></div>
+      </section>
+
+      <!-- Manga Detail Modal -->
+      <div class="modal" id="detailModal">
+        <div class="modal-content">
+          <button class="modal-close" id="closeModal">✕</button>
+          <div class="modal-body" id="detailContent"></div>
+        </div>
+      </div>
+
+      <!-- Chapter Reader Modal -->
+      <div class="modal reader-modal" id="readerModal">
+        <div class="reader-header">
+          <button id="closeReader" class="btn-back">← Kembali</button>
+          <span id="chapterTitle" class="chapter-title"></span>
+          <div class="reader-nav">
+            <button id="prevChapter" class="btn-nav">‹ Prev</button>
+            <button id="nextChapter" class="btn-nav">Next ›</button>
+          </div>
+        </div>
+        <div class="reader-content" id="readerContent"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <span class="logo-icon">📚</span>
+          <span>MangaAPI v2.3.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="/health" target="_blank">API Health</a>
+          <a href="/providers" target="_blank">Providers</a>
+          <a href="/dashboard" target="_blank">Dashboard</a>
+          <a href="https://github.com/KanekiCraynet/api-manga" target="_blank">GitHub</a>
+        </div>
+        <p class="footer-copy">© 2024 MangaAPI - Open Source Project</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/js/app.js"></script>
+</body>
 </html>
