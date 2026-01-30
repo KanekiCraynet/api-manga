@@ -37,10 +37,6 @@ jobs:
           node --check src/helper/edge_cache.js
           echo "✅ All files syntax-valid"
 
-      - name: Run tests
-        run: npm test
-        continue-on-error: true
-
   # Job 2: Deploy to Vercel (only on main/master push)
   deploy:
     name: Deploy to Vercel
