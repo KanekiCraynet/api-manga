@@ -1,5 +1,8 @@
 # Manga API
 
+[![CI/CD](https://github.com/KanekiCraynet/api-manga/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/KanekiCraynet/api-manga/actions/workflows/ci-cd.yml)
+[![Deploy](https://img.shields.io/badge/Vercel-Deployed-black?logo=vercel)](https://api-manga-five.vercel.app)
+
 Multi-source manga scraping API with advanced data processing, Cloudflare protection, and intelligent caching. Supports MangaDex (Official API), Komikcast, Shinigami, and Aqua Reader providers.
 
 ## Features
@@ -333,17 +336,35 @@ api-manga/
 └── vercel.json                   # Vercel deployment
 ```
 
-## Deployment
+### Vercel (Recommended)
 
-### Vercel
+This project is optimized for Vercel serverless deployment with automatic CI/CD.
 
 ```bash
-# Install Vercel CLI
-npm i -g vercel
+# Manual deploy
+npx vercel --prod
 
-# Deploy
-vercel
+# Or push to main branch for auto-deploy
+git push origin main
 ```
+
+**Features:**
+- Auto-deploy on push to main/master
+- Syntax check before deploy
+- GitHub Actions CI/CD pipeline
+
+### GitHub Actions CI/CD
+
+CI/CD is pre-configured in `.github/workflows/ci-cd.yml`.
+
+**Required GitHub Secrets:**
+| Secret | Description |
+|--------|-------------|
+| `VERCEL_TOKEN` | Vercel API token |
+| `VERCEL_ORG_ID` | Organization ID |
+| `VERCEL_PROJECT_ID` | Project ID |
+
+See [docs/CI_CD_SETUP.md](docs/CI_CD_SETUP.md) for detailed setup.
 
 ### Docker
 
@@ -356,6 +377,21 @@ COPY . .
 EXPOSE 3000
 CMD ["npm", "start"]
 ```
+
+## Vercel Performance Optimizations
+
+This API is optimized for Vercel's serverless environment:
+
+| Optimization | Standard | Vercel |
+|--------------|----------|--------|
+| Request Timeout | 30s | 8s |
+| Retry Attempts | 3 | 1 |
+| Cache Size | 1000 | 200 |
+| Hash Algorithm | MD5 | djb2 (faster) |
+| HTTP Keep-Alive | Enabled | Disabled |
+| Compression | JSON | gzip |
+
+All optimizations are **automatic** when deployed to Vercel.
 
 ## Error Codes
 
@@ -395,4 +431,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Version**: 2.2.0 | **Author**: [KanekiCraynet](https://github.com/KanekiCraynet)
+**Version**: 2.3.0 | **Author**: [KanekiCraynet](https://github.com/KanekiCraynet)
